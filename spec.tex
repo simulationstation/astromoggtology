@@ -1,0 +1,417 @@
+\documentclass[11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{microtype}
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible
+}
+
+\title{\textbf{Master Plan: Unified Cosmology Systematics \& Inference Explorer}\\
+\large Quasar Dipole Forensics \,+\, Dark-Siren Propagation \,+\, Hubble-Tension ``Invisible Wedge''}
+\author{Project Spec for Implementation Agent}
+\date{February 14, 2026}
+
+\begin{document}
+\maketitle
+
+\section{Executive Summary}
+
+Build a production-grade, web-based \textbf{Visual Explorer} backed by a reproducible compute platform that ingests public survey catalogs and cosmology data products, then exposes three interconnected capabilities:
+
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Catalog Forensics (Quasar Dipole and beyond).} Fit and subtract explicit selection/coverage models, inspect residual low-$\ell$ structure, and demonstrate time-instability and template-driven artifacts with rigorous null controls.
+\item \textbf{Dark-Siren Propagation \& Calibration.} Reproduce the calibrated dark-siren propagation preference (e.g., $\Delta\mathrm{LPD}\approx 3.67$), run stress tests (selection, catalog weighting, spec-$z$ anchoring, false-match gates), and expose where the score is sensitive.
+\item \textbf{Hubble ``Invisible Wedge'' Inference.} Under a specified propagation history $R(z)$ and Planck-facing recalibration, compute inference-bias wedges in $H_0$ and show causal-closure: MG-truth forward simulations yield the observed score scale as typical, while GR-truth does not.
+\end{enumerate}
+
+This system must support \textbf{multi-user} interactive analysis, \textbf{deterministic} reproducibility (paper-grade), \textbf{auditable} provenance, and \textbf{scalable} batch computation on your server.
+
+\section{Guiding Principles (Non-Negotiables)}
+
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Everything is an inference object.} Catalogs are modeled measurements. The tool must surface every modeling assumption as a first-class, toggleable object.
+\item \textbf{Provenance by construction.} Every plot or number must be traceable to: dataset version(s), code commit hash, config snapshot, random seeds, and exact command invocation.
+\item \textbf{Strict legitimacy gates.} Any matching/override step (e.g., spec-$z$ anchoring) must carry quantified coincidence controls (shifted-sky, rotations) and must report pass/fail gates.
+\item \textbf{Separation of detection vs explanation.} The UI must clearly distinguish: (a) measured preference/anomaly, (b) causal/mechanistic attribution, (c) implications under conditional assumptions.
+\item \textbf{Composable modules.} Every dataset, model, and estimator must be a plugin: easy to add, easy to disable, easy to benchmark.
+\end{enumerate}
+
+\section{System Architecture}
+
+\subsection{High-Level Components}
+
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Data Lake / Object Store}
+\begin{itemize}
+\item Versioned raw datasets (FITS/CSV/Parquet), cached crossmatches, HEALPix maps, intermediate artifacts.
+\item Recommended: S3-compatible (MinIO) or POSIX + content-addressed storage.
+\end{itemize}
+
+\item \textbf{Metadata \& Provenance Store}
+\begin{itemize}
+\item PostgreSQL for dataset manifests, run registry, config hashes, job history.
+\item Each run gets a stable \texttt{run\_id} and stores \texttt{git\_sha}, \texttt{dirty} flag, \texttt{dataset\_versions}, \texttt{seed}, \texttt{container\_digest}.
+\end{itemize}
+
+\item \textbf{Compute Orchestration}
+\begin{itemize}
+\item Prefer: Prefect 2.x or Airflow for pipelines; Ray or Dask for distributed computation.
+\item Job queue: Celery/RQ for lightweight tasks; Slurm integration if your HPC uses it.
+\end{itemize}
+
+\item \textbf{Modeling \& Analytics Library}
+\begin{itemize}
+\item Python package with well-defined APIs: ingestion, map-building, fitting, null generation, scoring, reporting.
+\item Deterministic RNG management (seed hierarchy: global seed $\rightarrow$ dataset seed $\rightarrow$ job seed).
+\end{itemize}
+
+\item \textbf{Interactive Visual Explorer (Web App)}
+\begin{itemize}
+\item Frontend: React + TypeScript + WebGL sky viewer (HiPS/Aladin Lite or custom HEALPix tiling).
+\item Backend: FastAPI for queries + job submission; separate compute service for heavy tasks.
+\item Auth: OAuth + role-based access (viewer, analyst, admin).
+\end{itemize}
+\end{enumerate}
+
+\subsection{Core Data Model}
+
+All analyses reduce to a common set of objects:
+
+\begin{itemize}[leftmargin=*]
+\item \textbf{Catalog}: rows with (RA, Dec, fluxes, colors, z, z\_err, quality flags, epoch tags, IDs).
+\item \textbf{Mask}: HEALPix boolean mask + metadata.
+\item \textbf{Covariate Maps}: HEALPix maps of depth/coverage, extinction, stellar density, scan geometry, etc.
+\item \textbf{Count Map}: HEALPix counts per pixel (optionally per magnitude bin).
+\item \textbf{Model}: parametric or semi-parametric generative model for counts or likelihood terms.
+\item \textbf{Estimator}: dipole fit, GLM, low-$\ell$ regression, LPD scoring, causal-closure forward simulation.
+\item \textbf{Run}: immutable record linking inputs $\rightarrow$ outputs.
+\end{itemize}
+
+\section{Ingestion Master List (``ALL'' Public Data You Should Support)}
+
+Do not attempt to download everything by default. Implement \textbf{connectors} with manifests and on-demand ingestion.
+
+\subsection{A. Quasar / Galaxy / IR Surveys (Dipole Forensics)}
+
+\begin{itemize}[leftmargin=*]
+\item CatWISE / unWISE-derived quasar selections (time-slice epoch products, if available)
+\item AllWISE / unWISE depth and coverage maps (W1/W2 frames, coverage, depth proxies)
+\item Gaia (stellar density proxies; crossmatch for contamination modeling)
+\item Pan-STARRS / DES / other optical photometry (if public and needed for color cuts / contamination)
+\item Extinction maps (SFD-like dust, Planck dust products)
+\item Optional: radio source catalogs used in dipole literature (NVSS/TGSS) as plug-in modules
+\end{itemize}
+
+\subsection{B. Spectroscopic Redshift (Spec-$z$ Anchoring)}
+
+\begin{itemize}[leftmargin=*]
+\item DESI public spectroscopy (bulk z catalogs; quality tiers)
+\item SDSS spectroscopy (including BOSS/eBOSS tables as available)
+\item 2MRS, 6dFGS, 2dFGRS, GAMA (already in your pipeline)
+\item Optional: other regional spec catalogs if available and cleanly ingestible
+\end{itemize}
+
+\subsection{C. Dark Sirens \& GW Datasets}
+
+\begin{itemize}[leftmargin=*]
+\item GWTC event posterior samples (GWOSC or archived)
+\item Search-sensitivity injections used for selection calibration (Zenodo archives you already use)
+\item Selection-model artifacts (logit models, trained weights, diagnostics)
+\end{itemize}
+
+\subsection{D. Cosmology External (for ``Invisible Wedge'' and Context)}
+
+\begin{itemize}[leftmargin=*]
+\item Planck (parameter reference; lensing bandpowers; optionally TT/TE/EE summary products)
+\item BAO summary constraints (public)
+\item SN distance sets (Pantheon-like public sets)
+\item Cosmic chronometers / $H(z)$ compilation (public)
+\end{itemize}
+
+\subsection{E. Map Infrastructure}
+
+\begin{itemize}[leftmargin=*]
+\item HEALPix base grids at multiple NSIDE (64, 128, 256, 512)
+\item HiPS tiling for web visualization
+\item Precomputed sky coordinate transforms (Galactic/ecliptic)
+\end{itemize}
+
+\section{Analysis Modules (What the Tool Must Do)}
+
+\subsection{Module 1: Quasar Dipole Forensics}
+
+\subsubsection{Inputs}
+Catalog selection(s) (CatWISE/unWISE), masks, covariate maps (depth/coverage, ecliptic lat/lon, extinction, stellar density), and time-slice catalogs.
+
+\subsubsection{Core Model}
+Poisson GLM for counts per pixel $p$:
+\[
+\log \mu_p = \alpha + \sum_k \beta_k T_{k,p} + \mathbf{d}\cdot \hat{\mathbf{n}}_p
+\]
+where $T_{k,p}$ are templates (depth, lat, lon harmonics, dust, stars), and $\mathbf{d}$ is a dipole vector.
+
+\subsubsection{Critical Tests (must be one-click in UI)}
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Time-domain slice test:} fit dipole per epoch; show axis/amplitude drift.
+\item \textbf{Template ablation:} add templates in sequence; show dipole collapse or axis stabilization.
+\item \textbf{$\gamma\neq 1$ causal test:} estimate selection response exponent $\gamma$ from counts vs depth proxy; forward simulate; show dipole emerges only when mis-modeled.
+\item \textbf{Null controls:} random rotations, shifted masks, bootstrap resampling, footprint perturbations.
+\item \textbf{Residual explorer:} map of (data - model) residuals with low-$\ell$ decomposition; interactive toggles.
+\end{enumerate}
+
+\subsection{Module 2: Dark-Siren Propagation Explorer}
+
+\subsubsection{Inputs}
+GW event posteriors, galaxy catalog likelihood machinery, selection normalization artifacts, spec-$z$ catalogs, and precomputed cached terms (for fast interactive use).
+
+\subsubsection{Core Scoring}
+Expose:
+\begin{itemize}[leftmargin=*]
+\item $\Delta\mathrm{LPD}_{\rm tot}$ and decomposition into data vs selection terms
+\item Dominant-channel (spectral-only) mode vs full mode (if feasible)
+\item Strict coincidence gates for spec-$z$ anchoring (shifted/true thresholds; per-event controls)
+\end{itemize}
+
+\subsubsection{Interactive Controls}
+\begin{enumerate}[leftmargin=*]
+\item Event subset toggles: distance tertiles, HLV vs HL, leverage-ranked subsets.
+\item Catalog weighting variants: luminosity-weighted, uniform, z-flattened, thinning, etc.
+\item Photo-$z$ bias sliders (b0,b1) and realistic-prior marginalization preview (with validated estimators).
+\item Spec-$z$ anchoring controls:
+\begin{itemize}
+\item radius sweep (trusted only)
+\item K sweep (host-weight ranked)
+\item quality tiers (A/B/C)
+\item false-match controls displayed alongside coverage
+\end{itemize}
+\item ``Legitness dashboard'': coverage vs $\Delta\mathrm{LPD}$ monotonicity, slope, p-values, and gate pass/fail.
+\end{enumerate}
+
+\subsection{Module 3: Hubble ``Invisible Wedge'' Framework}
+
+\subsubsection{Inputs}
+Propagation template $R(z)$ or amplitude dial $R_\alpha(z)$, Planck-facing anchor parameters, lensing response refit machinery, and late-time inference mapping.
+
+\subsubsection{Outputs}
+\begin{enumerate}[leftmargin=*]
+\item Bias in inferred $H_0$ under GR compression when MG truth holds (fixed $\Omega_m$ and lensing-proxy channels).
+\item Lensing response interpretability view: baseline suppression vs MG-aware response refit; parameter dials.
+\item A ``wedge explorer'': map $\alpha \mapsto \Delta H_0$ and consistency criteria toggles.
+\end{enumerate}
+
+\subsection{Module 4: Causal-Closure Suite (MG-Truth Injection)}
+
+\subsubsection{Purpose}
+Under the assumption that your MG solution is true, show that the observed $\Delta\mathrm{LPD}\approx 3.67$ is typical under MG-truth and rare under GR-truth, and that the scale collapses when catalog structure is removed.
+
+\subsubsection{Implementation}
+\begin{itemize}[leftmargin=*]
+\item Forward generate synthetic catalogs (MG-truth, GR-truth) using the same event set + selection normalization + $f_{\rm miss}$ marginalization.
+\item Score with production $\Delta\mathrm{LPD}$ code (no modifications).
+\item Control: ``catalog removed'' toy z-weighting.
+\item Optional: dose-response $\alpha$ dial injection to produce a monotone curve of typicality vs $\alpha$.
+\end{itemize}
+
+\section{Visual Explorer UI: Pages and Features}
+
+\subsection{Global UI Requirements}
+\begin{itemize}[leftmargin=*]
+\item Every chart/map has a \textbf{Run Provenance} drawer showing config, datasets, git hash, seed.
+\item Every toggle has a tooltip explaining the assumption and its expected effect.
+\item One-click export of: figure PNG/SVG, underlying CSV/NPZ, and a ``methods card'' for paper writing.
+\end{itemize}
+
+\subsection{Page 1: Sky Map Explorer (Counts, Depth, Residuals)}
+\begin{itemize}[leftmargin=*]
+\item Layer toggles: counts, depth, extinction, stellar density, residuals, dipole vector overlay.
+\item Coordinate frames: equatorial / galactic / ecliptic.
+\item Low-$\ell$ decomposition panel: show $\ell=1,2,3$ modes with coefficients.
+\end{itemize}
+
+\subsection{Page 2: Dipole Forensics (Quasar)}
+\begin{itemize}[leftmargin=*]
+\item Slider: faint limit / magnitude bins; show axis drift curves.
+\item Time slider: epoch slices; show time-instability.
+\item Template ablation: checkboxes; show resulting dipole amplitude/axis.
+\item ``$\gamma$'' response panel: estimated $\gamma$, uncertainty, and forward-sim reconstruction.
+\end{itemize}
+
+\subsection{Page 3: Dark-Siren Score Explorer}
+\begin{itemize}[leftmargin=*]
+\item Display $\Delta\mathrm{LPD}_{\rm tot}$ and decomposition, per event and aggregate.
+\item ``Legitness'' panel: spec-$z$ coverage vs $\Delta\mathrm{LPD}$; false-match gates.
+\item Event filters: distance tertiles, network splits, leverage cuts.
+\item Catalog weighting toggles and photo-$z$ bias controls.
+\end{itemize}
+
+\subsection{Page 4: Hubble Wedge Explorer}
+\begin{itemize}[leftmargin=*]
+\item $\alpha$ dial: $R_\alpha(z)$ with plots of inferred $\Delta H_0$.
+\item Lensing overlay: baseline vs refit in bandpower space; show parameter dials.
+\item Causal-closure panel linking MG-truth typicality to observed $\Delta\mathrm{LPD}$ scale.
+\end{itemize}
+
+\subsection{Page 5: Reproducibility Hub}
+\begin{itemize}[leftmargin=*]
+\item ``Reproduce this figure'' button generates a shell command and a pinned config file.
+\item Run registry browser: compare runs, diff configs, compute deltas.
+\item Export bundle creator: zip of configs + manifests + minimal cached artifacts.
+\end{itemize}
+
+\section{Engineering Plan (Phased Roadmap)}
+
+\subsection{Phase 0 (1--2 weeks): Foundations}
+\begin{itemize}[leftmargin=*]
+\item Establish repo structure: \texttt{core/} (python package), \texttt{pipelines/}, \texttt{web/}, \texttt{infra/}.
+\item Implement Run Registry (Postgres) and object store layout.
+\item Implement dataset manifest format and ingestion scaffolding.
+\item Create golden ``baseline reproductions'' for quasar dipole and dark siren.
+\end{itemize}
+
+\subsection{Phase 1 (2--4 weeks): Quasar Dipole Forensics MVP}
+\begin{itemize}[leftmargin=*]
+\item Count-map builder + template maps + GLM fitting + residual mapping.
+\item Time-slice support and automated ``non-physical'' time-instability report.
+\item Web UI pages 1--2 with map tiling and dipole plots.
+\end{itemize}
+
+\subsection{Phase 2 (3--6 weeks): Dark-Siren Explorer MVP}
+\begin{itemize}[leftmargin=*]
+\item Wrap existing scoring and cached-term evaluation into web-callable jobs.
+\item Spec-$z$ anchoring module with strict false-match gating and coverage trend plots.
+\item Web UI page 3 with event filters and stress toggles.
+\end{itemize}
+
+\subsection{Phase 3 (3--6 weeks): Hubble Wedge + Causal-Closure}
+\begin{itemize}[leftmargin=*]
+\item Integrate $R(z)$ and $\alpha$ dial into wedge calculations.
+\item Implement MG-truth closure suite runner and visualization.
+\item Web UI page 4 with wedge plots and closure histograms.
+\end{itemize}
+
+\subsection{Phase 4 (ongoing): ``ALL'' ingestion \& plugin expansion}
+\begin{itemize}[leftmargin=*]
+\item Add catalog connectors incrementally with test fixtures and QC dashboards.
+\item Add additional dipole-relevant catalogs (radio, optical) as separate plugins.
+\item Add independent catalog variants for dark sirens.
+\end{itemize}
+
+\section{Deployment \& Operations}
+
+\subsection{Deployment Targets}
+\begin{itemize}[leftmargin=*]
+\item \textbf{Dev}: Docker Compose (Postgres + MinIO + API + UI).
+\item \textbf{Prod}: Kubernetes (recommended) or Nomad; autoscaling compute workers.
+\item \textbf{Compute}: Ray cluster or Dask cluster integrated with your server scheduler.
+\end{itemize}
+
+\subsection{Observability}
+\begin{itemize}[leftmargin=*]
+\item Prometheus + Grafana for metrics; Loki/ELK for logs.
+\item Per-job resource accounting and failure diagnostics.
+\end{itemize}
+
+\subsection{Security}
+\begin{itemize}[leftmargin=*]
+\item AuthN/AuthZ; signed URLs for artifact downloads.
+\item Rate-limits for public endpoints; separate ``compute'' network zone.
+\item Dataset licensing compliance in manifests.
+\end{itemize}
+
+\section{Acceptance Tests (What ``Done'' Means)}
+
+\subsection{Quasar Dipole}
+\begin{itemize}[leftmargin=*]
+\item Time-slice dipole drift reproduced exactly from a pinned dataset snapshot.
+\item Template ablation reproduces axis drift behavior and reduces residual dipole under the correct template set.
+\item $\gamma$ causal injection reproduces fake dipole only under mis-modeled $\gamma$.
+\end{itemize}
+
+\subsection{Dark Sirens}
+\begin{itemize}[leftmargin=*]
+\item Baseline $\Delta\mathrm{LPD}$ reproduction (bitwise within tolerance) from a one-command run.
+\item Spec-$z$ legitness suite reproduces monotonic coverage trend and strict gate outcomes.
+\item Causal-closure suite reproduces MG-truth typicality vs GR-truth rarity and catalog-removed collapse.
+\end{itemize}
+
+\subsection{Web App}
+\begin{itemize}[leftmargin=*]
+\item Any plot includes provenance metadata.
+\item Any run is reproducible from a generated command + pinned config.
+\item Multi-user concurrency: N simultaneous users submit jobs without state leakage.
+\end{itemize}
+
+\section{Implementation Notes for Your Agent}
+
+\subsection{Repo Skeleton (suggested)}
+\begin{lstlisting}
+PROJECT/
+  core/                      # Python package
+    ingest/
+    maps/
+    models/
+    scoring/
+    nulls/
+    reporting/
+    utils/
+  pipelines/                 # Prefect/Airflow DAGs
+  web/
+    api/                     # FastAPI
+    ui/                      # React
+  infra/
+    docker/
+    k8s/
+  data/
+    manifests/
+    cache/
+  outputs/
+  docs/
+\end{lstlisting}
+
+\subsection{Run Manifest Schema (minimal)}
+\begin{lstlisting}
+run_id: <uuid>
+created_utc: <iso>
+git_sha: <sha>
+dirty: <bool>
+pipeline: <name>
+config_hash: <sha256>
+seed: <int>
+datasets:
+  - name: DESI_DR1
+    version: <string>
+    path: s3://...
+artifacts:
+  - report.md
+  - summary.json
+  - tables/*.csv
+  - figures/*.png
+\end{lstlisting}
+
+\section{What This Enables}
+
+Once deployed, the explorer becomes:
+\begin{itemize}[leftmargin=*]
+\item A systematics microscope for any catalog-derived low-$\ell$ claim (dipoles, quadrupoles, large-scale gradients).
+\item A reproducible, interactive lab notebook for dark-siren calibration, spec-$z$ anchoring, and inference sensitivity.
+\item A unified narrative engine linking ``catalog artifacts'' and ``inference wedges'' via explicit, testable modeling assumptions.
+\end{itemize}
+
+\section{Next Step}
+
+Your agent should start with Phase 0 and implement the ingestion/manifests/run registry first. Then build Quasar Dipole MVP and Dark-Siren MVP in parallel, using pinned snapshots of the datasets you already have in the current codebase outputs.
+
+\end{document}
